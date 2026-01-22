@@ -1,3 +1,6 @@
+// GIT TEST: This line added for Git verification
+console.log("Git is working!");
+
 
 import React, { useState, useRef, useEffect } from 'react';
 import * as fabricImport from 'fabric';

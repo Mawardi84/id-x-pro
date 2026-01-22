@@ -1,0 +1,13 @@
+# Set default behavior for all files
+* text=auto
+
+# Force LF for TypeScript/JavaScript files
+*.tsx text eol=lf
+*.ts text eol=lf
+*.jsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+
+# Keep CRLF for Windows-specific files
+*.bat text eol=crlf
+*.cmd text eol=crlf
