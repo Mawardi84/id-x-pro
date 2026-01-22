@@ -4,17 +4,64 @@
 
 # Run and deploy your AI Studio app
 
-This contains everything you need to run your app locally.
+ID-X-Pro
 
-View your app in AI Studio: https://ai.studio/apps/drive/1ArX1eXBGhICOcMxBdtGYclXckSTTufBB
+Secure & Smart Digital Identity Platform
 
-## Run Locally
+📌 Description
 
-**Prerequisites:**  Node.js
+ID-X-Pro adalah aplikasi manajemen identitas digital yang dirancang untuk membantu instansi, organisasi, dan perusahaan dalam proses pembuatan, pengelolaan, dan verifikasi ID Card digital secara aman, terstruktur, dan terintegrasi.
+Aplikasi ini mendukung desain ID Card dinamis, QR Code dengan payload terenkripsi, serta kontrol akses berbasis peran (Role-Based Access Control / RBAC) untuk memastikan keamanan data dan akuntabilitas pengguna.
+Dengan pendekatan sistem yang modular dan scalable, ID-X-Pro dapat dikembangkan lebih lanjut untuk kebutuhan absensi, akses kontrol, audit internal, dan integrasi sistem lainnya.
 
+✨ Features
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+🎫 Digital ID Card Management
+Pembuatan dan pengelolaan ID Card digital berbasis template yang fleksibel.
+
+🎨 Dynamic Card Designer
+Editor desain ID Card (layout, warna, logo, teks, dan foto) secara dinamis.
+
+🔐 Secure QR Code Verification
+QR Code dengan payload terenkripsi untuk validasi identitas secara cepat dan aman.
+
+👥 Role-Based Access Control (RBAC)
+Pengaturan hak akses berdasarkan peran (Admin, Operator, Viewer).
+
+🧾 Audit Log & Activity Tracking
+Pencatatan seluruh aktivitas pengguna untuk keperluan audit dan monitoring.
+
+📄 Export & Print Support
+Dukungan ekspor ID Card ke format digital maupun cetak.
+
+🌐 Web-Based System
+Dapat diakses melalui browser tanpa instalasi tambahan.
+
+🛠 Tech Stack
+Frontend
+
+React / Next.js
+
+TypeScript
+
+Tailwind CSS
+
+Fabric.js / Canvas (ID Card Designer)
+
+QR Code Generator
+
+Backend
+
+Node.js / Laravel (opsional sesuai implementasi)
+
+REST API
+
+Authentication & Authorization
+
+Security
+
+Encrypted QR Payload
+
+Token-based Authentication
+
+Access Control Layer
