@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ID-X | Sistem Identitas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #020617; /* Slate 950 */
+        color: #f8fafc;
+        overflow-x: hidden;
+      }
+      .font-display {
+        font-family: 'Space Grotesk', sans-serif;
+      }
+      
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: #0f172a; }
+      ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+      /* Print Specific Styles - CRITICAL FOR CARD PRINTING */
+      @media print {
+        @page {
+          size: A4;
+          margin: 1cm;
+        }
+        body {
+          background-color: white !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          color: black !important;
+          overflow: visible !important;
+        }
+        /* Hide UI elements */
+        .no-print, aside, header, .toolbar, .properties-panel, .verify-ui {
+          display: none !important;
+        }
+        /* Show print container */
+        .print-container {
+          display: grid !important;
+          grid-template-columns: repeat(2, 1fr); /* 2 Cards per row */
+          gap: 1rem;
+          width: 100%;
+        }
+        /* Prevent cards from breaking across pages */
+        .card-pair-wrapper {
+          break-inside: avoid;
+          page-break-inside: avoid;
+          margin-bottom: 1rem;
+          border: 1px dashed #ccc; /* Cut lines if enabled */
+        }
+        .card-pair-wrapper.no-border {
+          border: none;
+        }
+      }
+    </style>
+    <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
+    "html-to-image": "https://esm.sh/html-to-image@1.11.11",
+    "qr-code-styling": "https://esm.sh/qr-code-styling@1.6.0-rc.1",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "fabric": "https://esm.sh/fabric@5.3.0",
+    "clsx": "https://esm.sh/clsx",
+    "tailwind-merge": "https://esm.sh/tailwind-merge",
+    "html5-qrcode": "https://esm.sh/html5-qrcode@2.3.8"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

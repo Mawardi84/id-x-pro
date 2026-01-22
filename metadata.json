@@ -1,0 +1,8 @@
+{
+  "name": "ID-Card ",
+  "description": "A professional ID card builder with custom layouts, templates, QR code generation, NFC writing capabilities, and AI-powered content assistance.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
