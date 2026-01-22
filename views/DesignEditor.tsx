@@ -1,29 +1,22 @@
-// GIT TEST: This line added for Git verification
-console.log("Git is working!");
-
-
 import React, { useState, useRef, useEffect } from 'react';
 import * as fabricImport from 'fabric';
-import * as QRCodeStylingModule from 'qr-code-styling';
-type QRCodeStylingType = typeof QRCodeStylingModule.default | typeof QRCodeStylingModule;
+import QRCodeStyling from 'qr-code-styling';
 import { 
     Type, Square, Circle, Triangle, Image as ImageIcon, QrCode, Trash2, Save, PenTool, 
     Sparkles, Upload, X, Copy, Lock, Unlock, 
     AlignCenter, AlignVerticalJustifyCenter, Layers, Grip, Fingerprint,
     CheckCircle, Download, Palette, AlertTriangle, Loader2, RefreshCcw,
-    Undo, Redo, Scissors, Ban, ZoomIn, ZoomOut, Maximize, Move, Wand2, Shield, Box,
-    Layout, Ruler, MonitorCheck
+    Undo, Redo, Scissors, Ban, ZoomIn, ZoomOut, Maximize, Move
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { Button, Input, Label, Select, cn } from '../components/UIComponents';
 import { analyzeDesign } from '../services/geminiService';
-import { CardTemplate, InstitutionConfig, Member } from '../types';
-import { CardBackground, SmartCardPreview } from '../components/CardRenderers';
+import { CardTemplate, InstitutionConfig } from '../types';
+import { CardBackground } from '../components/CardRenderers';
 
 // --- CONSTANTS ---
 const CR80_WIDTH = 350;
 const CR80_HEIGHT = 555;
-const SAFE_MARGIN = 20;
 
 const JSON_KEYS = [
     'dataField', 'qrStyles', 'id', 'qrAnimation', 
@@ -32,7 +25,19 @@ const JSON_KEYS = [
     'qrLogoUrl', 'qrLogoSize', 'qrGradientRotation',
     'lockMovementX', 'lockMovementY', 'lockRotation', 'lockScalingX', 'lockScalingY',
     'selectable', 'evented', 'stroke', 'strokeWidth', 'rx', 'ry', 'fill', 'fontFamily',
-    'clipPath', 'smartType' 
+    'clipPath' 
+];
+
+const AVAILABLE_FONTS = [
+    'Arial', 
+    'Times New Roman', 
+    'Courier New', 
+    'Verdana', 
+    'Georgia', 
+    'Trebuchet MS', 
+    'Impact', 
+    'Inter', 
+    'Space Grotesk'
 ];
 
 const QR_PRESETS: Record<string, any> = {
@@ -45,34 +50,26 @@ const QR_PRESETS: Record<string, any> = {
     'elegant': { name: 'Elegan', dot: 'classy', corner: 'square', cornerDot: 'square' },
 };
 
-const MOCK_PREVIEW_MEMBER: Member = {
-    id: 'preview',
-    fullName: 'Nama Pegawai',
-    role: 'JABATAN',
-    department: 'Departemen',
-    employeeId: '1234567890',
-    employmentType: 'PNS',
-    status: 'ACTIVE',
-    approvalStatus: 'APPROVED',
-    joinedDate: '2024-01-01',
-    expiryDate: '2029-01-01',
-    photoUrl: 'https://via.placeholder.com/150 ',
-    scanHistory: []
-};
-
 // --- RESOLVERS ---
 const resolveFabric = () => {
     try {
         const lib = fabricImport as any;
         let fabricInstance = null;
         
+        // Strategy 1: Default Export (Common in v5 via esm.sh)
         if (lib && lib.default && lib.default.Canvas) fabricInstance = lib.default;
+        // Strategy 2: Named Exports (v6 or specific bundles)
         else if (lib && lib.Canvas) fabricInstance = lib;
+        // Strategy 3: Nested fabric object (Legacy)
         else if (lib && lib.fabric && lib.fabric.Canvas) fabricInstance = lib.fabric;
+        // Strategy 4: Global Fallback
         else if (typeof window !== 'undefined' && (window as any).fabric) fabricInstance = (window as any).fabric;
 
+        // CRITICAL FIX: Polyfill window.fabric for plugins/internals that expect global scope
         if (fabricInstance && typeof window !== 'undefined') {
-            if (!(window as any).fabric) (window as any).fabric = fabricInstance;
+            if (!(window as any).fabric) {
+                (window as any).fabric = fabricInstance;
+            }
         }
         
         return fabricInstance;
@@ -82,48 +79,12 @@ const resolveFabric = () => {
     return null;
 };
 
-const resolveQR = (): QRCodeStylingType => {
-  try {
-    const mod = QRCodeStylingModule as any;
-    // Handle berbagai format export
-    return mod.default || mod.QRCodeStyling || mod;
-  } catch (e) {
-    console.warn("QR module resolution failed:", e);
-    return QRCodeStylingModule as any;
-  }
-};
-// =================================================================
-// [PERBAIKAN 1] SANITIZE JSON - HAPUS OBJEK MALFORMED
-// =================================================================
-const sanitizeJson = (json: any) => {
-    if (!json || typeof json !== 'object') return json;
-    if (!json.objects || !Array.isArray(json.objects)) return json;
-
-    const cleanObjects = json.objects.filter((obj: any) => {
-        if (!obj) return false;
-        
-        // FIX: Penyaringan path yang lebih dalam
-        if (obj.type === 'path') {
-            if (!obj.path || !Array.isArray(obj.path) || obj.path.length === 0) return false;
-            
-            const hasValidCommands = obj.path.some((cmd: any) => {
-                if (!Array.isArray(cmd) || cmd.length === 0) return false;
-                return typeof cmd[0] === 'string' && cmd.length >= 1;
-            });
-            
-            if (!hasValidCommands) return false;
-        }
-        
-        // Filter poligon kosong
-        if (obj.type === 'polygon' || obj.type === 'polyline') {
-            if (!obj.points || !Array.isArray(obj.points) || obj.points.length === 0) return false;
-        }
-        
-        return true;
-    });
-
-    return { ...json, objects: cleanObjects };
-};
+const resolveQR = () => {
+    try {
+        // @ts-ignore
+        return (QRCodeStyling && QRCodeStyling.default) ? QRCodeStyling.default : QRCodeStyling;
+    } catch(e) { return QRCodeStyling; }
+}
 
 interface DesignEditorProps {
     frontJson: any;
@@ -156,13 +117,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
     const fabricCanvas = useRef<any>(null);
     const initializingRef = useRef(false);
     
-    const [showSmartPreview, setShowSmartPreview] = useState(false);
-    const [layoutScore, setLayoutScore] = useState(100);
-    const [layoutIssues, setLayoutIssues] = useState<string[]>([]);
-    
-    // =================================================================
-    // [PERBAIKAN 2] HISTORY STATE - TAMBAHKAN VALIDASI
-    // =================================================================
+    // Undo/Redo History State
     const [history, setHistory] = useState<Record<'front' | 'back', { stack: any[], index: number }>>({
         front: { stack: [], index: -1 },
         back: { stack: [], index: -1 }
@@ -176,13 +131,16 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
     const [isDragOver, setIsDragOver] = useState(false);
     const [isFabricReady, setIsFabricReady] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
+
+    // Zoom & Pan State
     const [zoomLevel, setZoomLevel] = useState(1);
     const [isPanning, setIsPanning] = useState(false);
-    const isPanningRef = useRef(false);
+    const isPanningRef = useRef(false); // Ref to access inside fabric events
     const isDraggingRef = useRef(false);
     const lastPosX = useRef(0);
     const lastPosY = useRef(0);
 
+    // --- FABRIC JS LOADING CHECK ---
     useEffect(() => {
         let attempts = 0;
         const checkInterval = setInterval(() => {
@@ -194,11 +152,12 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                 attempts++;
                 if (attempts > 50) { 
                     clearInterval(checkInterval);
-                    setIsFabricReady(true);
+                    setIsFabricReady(true); // Attempt anyway
                 }
             }
         }, 100);
         
+        // Immediate check
         if (resolveFabric()) {
             setIsFabricReady(true);
             clearInterval(checkInterval);
@@ -207,121 +166,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         return () => clearInterval(checkInterval);
     }, []);
 
-    const calculateLayoutScore = (canvas: any) => {
-        if (!canvas) return;
-        try {
-            if (typeof canvas.getObjects !== 'function') return;
-
-            const objects = canvas.getObjects();
-            let score = 100;
-            const issues: string[] = [];
-
-            if (objects.length === 0) {
-                setLayoutScore(0);
-                setLayoutIssues(["Kanvas kosong"]);
-                return;
-            }
-
-            objects.forEach((obj: any) => {
-                if(!obj) return;
-                const tooLeft = obj.left < SAFE_MARGIN;
-                const tooRight = (obj.left + (obj.width * (obj.scaleX || 1))) > (CR80_WIDTH - SAFE_MARGIN);
-                const tooTop = obj.top < SAFE_MARGIN;
-                const tooBottom = (obj.top + (obj.height * (obj.scaleY || 1))) > (CR80_HEIGHT - SAFE_MARGIN);
-
-                if (tooLeft || tooRight || tooTop || tooBottom) {
-                    if (obj.type !== 'rect' || (obj.width < CR80_WIDTH && obj.height < CR80_HEIGHT)) {
-                        score -= 5;
-                        if (!issues.includes("Objek terlalu dekat tepi (Bahaya Potong)")) issues.push("Objek terlalu dekat tepi (Bahaya Potong)");
-                    }
-                }
-
-                if (obj.type === 'i-text' || obj.type === 'textbox') {
-                    const effectiveSize = (obj.fontSize || 12) * (obj.scaleY || 1);
-                    if (effectiveSize < 8) {
-                        score -= 5;
-                        if (!issues.includes("Teks terlalu kecil (< 8pt)")) issues.push("Teks terlalu kecil (< 8pt)");
-                    }
-                }
-            });
-
-            const photo = objects.find((o: any) => o.dataField === 'photoUrl');
-            if (photo) {
-                const centerX = photo.left + (photo.width * (photo.scaleX || 1)) / 2;
-                const canvasCenter = CR80_WIDTH / 2;
-                if (Math.abs(centerX - canvasCenter) > 10 && Math.abs(centerX - canvasCenter) < 50) {
-                    score -= 5;
-                    if (!issues.includes("Foto profil tidak tepat di tengah")) issues.push("Foto profil tidak tepat di tengah");
-                }
-            }
-
-            setLayoutScore(Math.max(0, Math.round(score)));
-            setLayoutIssues(issues);
-        } catch(e) {
-            console.debug("Layout calculation skipped", e);
-        }
-    };
-
-    const handleAutoOptimize = () => {
-        if (!fabricCanvas.current || isLocked) return;
-        const canvas = fabricCanvas.current;
-        const objects = canvas.getObjects();
-        
-        canvas.discardActiveObject();
-
-        let modified = false;
-
-        objects.forEach((obj: any) => {
-            if(!obj) return;
-
-            if (obj.type === 'image' && Math.abs((obj.scaleX || 1) - (obj.scaleY || 1)) > 0.01) {
-                const avgScale = ((obj.scaleX || 1) + (obj.scaleY || 1)) / 2;
-                obj.set({ scaleX: avgScale, scaleY: avgScale });
-                modified = true;
-            }
-
-            if (obj.dataField === 'photoUrl') {
-                const centerX = obj.left + (obj.width * (obj.scaleX || 1)) / 2;
-                const canvasCenter = CR80_WIDTH / 2;
-                if (Math.abs(centerX - canvasCenter) < (CR80_WIDTH * 0.2)) {
-                    obj.set({ left: canvasCenter - (obj.width * (obj.scaleX || 1)) / 2 });
-                    obj.setCoords();
-                    modified = true;
-                }
-            }
-
-            if (obj.type === 'i-text' || obj.type === 'textbox') {
-                const width = obj.width * (obj.scaleX || 1);
-                const height = obj.height * (obj.scaleY || 1);
-                
-                let newLeft = obj.left;
-                let newTop = obj.top;
-
-                if (obj.left < SAFE_MARGIN) newLeft = SAFE_MARGIN;
-                else if (obj.left + width > CR80_WIDTH - SAFE_MARGIN) newLeft = CR80_WIDTH - SAFE_MARGIN - width;
-
-                if (obj.top < SAFE_MARGIN) newTop = SAFE_MARGIN;
-                else if (obj.top + height > CR80_HEIGHT - SAFE_MARGIN) newTop = CR80_HEIGHT - SAFE_MARGIN - height;
-
-                if (newLeft !== obj.left || newTop !== obj.top) {
-                    obj.set({ left: newLeft, top: newTop });
-                    obj.setCoords();
-                    modified = true;
-                }
-            }
-        });
-
-        if (modified) {
-            canvas.renderAll();
-            saveCanvasState(canvas);
-            setRefreshKey(prev => prev + 1);
-            calculateLayoutScore(canvas);
-            alert("✨ Desain telah dioptimalkan otomatis!");
-        } else {
-            alert("Desain sudah optimal!");
-        }
-    };
-
+    // --- FABRIC JS INIT ---
     useEffect(() => {
         if (!canvasRef.current || !isFabricReady) return;
 
@@ -337,6 +182,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
             if (initializingRef.current) return;
             initializingRef.current = true;
 
+            // Cleanup existing if any
             if (fabricCanvas.current) {
                 try {
                     fabricCanvas.current.dispose();
@@ -360,15 +206,13 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
 
                 fabricCanvas.current = canvas;
 
-                const rawJson = activeSide === 'front' ? frontJson : backJson;
-                // =================================================================
-                // [PERBAIKAN 3] PASTIKAN SANITIZE DILAKUKAN SEBELUM LOAD
-                // =================================================================
-                const currentJson = sanitizeJson(rawJson);
+                // Load Data
+                const currentJson = activeSide === 'front' ? frontJson : backJson;
                 
-                if (currentJson && typeof currentJson === 'object' && Array.isArray(currentJson.objects)) {
-                    historyProcessing.current = true;
+                if (currentJson && typeof currentJson === 'object') {
+                    historyProcessing.current = true; // Don't trigger save during load
                     
+                    // Safe loading wrapper
                     await new Promise<void>((resolve) => {
                          try {
                              canvas.loadFromJSON(currentJson, () => {
@@ -376,12 +220,12 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                              });
                          } catch (err) {
                              console.error("Error inside loadFromJSON", err);
-                             resolve(); 
+                             resolve(); // Resolve anyway to prevent hanging
                          }
                     });
                     
                     historyProcessing.current = false;
-                    
+
                     canvas.forEachObject((obj: any) => {
                         obj.selectable = !isLocked;
                         obj.evented = !isLocked;
@@ -393,43 +237,14 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                     canvas.add(text);
                 }
                 
-                // =================================================================
-                // [PERBAIKAN 4] HISTORY INIT - TUNGGU CANVAS SIAP
-                // =================================================================
-                useEffect(() => {
-                    if (!fabricCanvas.current || !isFabricReady) return;
-                    
-                    const canvas = fabricCanvas.current;
-                    if (canvas.disposed) return;
-                    
-                    setTimeout(() => {
-                        try {
-                            setHistory(prev => {
-                                const sideHistory = prev[activeSide];
-                                if (sideHistory.stack.length > 0) return prev;
-                                
-                                const objs = canvas.getObjects() || [];
-                                if (objs.length === 0) return prev;
-                                
-                                try {
-                                    const initialJson = canvas.toJSON(JSON_KEYS);
-                                    if (initialJson?.objects) {
-                                        const newStack = [initialJson];
-                                        return {
-                                            ...prev,
-                                            [activeSide]: { stack: newStack, index: 0 }
-                                        };
-                                    }
-                                } catch (e) {
-                                    console.warn("History init skipped:", e.message);
-                                }
-                                return prev;
-                            });
-                        } catch (e) {
-                            console.warn("History init timeout error:", e);
-                        }
-                    }, 300);
-                }, [fabricCanvas.current, isFabricReady, activeSide]);
+                // Initialize History for this side if empty
+                if (history[activeSide].stack.length === 0) {
+                     // Ensure we have a valid object to save
+                     try {
+                        const initialJson = canvas.toJSON(JSON_KEYS);
+                        addToHistoryInternal(initialJson, activeSide);
+                     } catch (e) { console.error("History Init Error", e); }
+                }
 
                 if(!isMounted) {
                     try { canvas.dispose(); } catch(e) {}
@@ -440,26 +255,16 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
 
                 canvas.requestRenderAll();
                 updateLayerList(canvas);
-                calculateLayoutScore(canvas);
                 
-                // --- EVENTS: ROBUST SELECTION HANDLER ---
+                // Events
                 const updateSelection = (e: any) => {
                     if (!e) return;
                     let selected = null;
-                    
-                    try {
-                        if (e.selected && Array.isArray(e.selected) && e.selected.length > 0) {
-                            selected = e.selected[0];
-                        } else if (e.target) {
-                            selected = e.target;
-                        }
-                    } catch (err) {
-                        console.warn("Selection error handled:", err);
-                        selected = e.target || null;
-                    }
+                    // Robust selection check
+                    if (e.selected && Array.isArray(e.selected) && e.selected.length > 0) selected = e.selected[0];
+                    else if (e.target) selected = e.target;
                     
                     setSelectedObject(selected);
-                    
                     if (selected) {
                         setActiveTab('properties'); 
                         setRefreshKey(prev => prev + 1);
@@ -467,19 +272,16 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                 };
 
                 const clearSelection = () => {
-                    try {
-                        if (canvas && !canvas.disposed && !canvas.getActiveObject()) {
-                            setSelectedObject(null);
-                            setRefreshKey(prev => prev + 1);
-                        }
-                    } catch(e) { console.warn("Clear selection error", e); }
+                    if (!canvas.getActiveObject()) {
+                        setSelectedObject(null);
+                        setRefreshKey(prev => prev + 1);
+                    }
                 };
 
                 const onModified = () => {
                     if (historyProcessing.current) return;
                     saveCanvasState(canvas);
                     updateLayerList(canvas);
-                    calculateLayoutScore(canvas);
                     setRefreshKey(prev => prev + 1);
                 };
 
@@ -487,6 +289,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                 canvas.on('selection:updated', updateSelection);
                 canvas.on('selection:cleared', clearSelection);
                 
+                // Trigger save on these events
                 canvas.on('object:modified', onModified);
                 canvas.on('object:added', onModified);
                 canvas.on('object:removed', onModified);
@@ -497,13 +300,14 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                 canvas.on('object:rotating', onLiveUpdate);
                 
                 canvas.on('mouse:down', (e: any) => {
+                    // Panning Logic
                     if (isPanningRef.current || e.e.altKey) {
                         isDraggingRef.current = true;
                         canvas.selection = false;
                         lastPosX.current = e.e.clientX;
                         lastPosY.current = e.e.clientY;
                         canvas.setCursor('grabbing');
-                        return;
+                        return; // Stop other processing
                     }
 
                     if (!e.target) {
@@ -547,6 +351,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                     opt.e.stopPropagation();
                 });
 
+                // Helper to fix offset issues
                 setTimeout(() => {
                     if (canvas && !canvas.disposed) canvas.calcOffset();
                 }, 100);
@@ -571,6 +376,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         }
     }, [activeSide, isLocked, isFabricReady]); 
 
+    // Handle Window Resize
     useEffect(() => {
         const handleResize = () => {
             if (fabricCanvas.current) fabricCanvas.current.calcOffset();
@@ -582,90 +388,56 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
     const updateLayerList = (canvas: any) => {
         if (!canvas) return;
         try {
-            if(canvas.disposed) return;
             const objs = canvas.getObjects().slice().reverse(); 
             setCanvasObjects(objs);
         } catch (e) { console.error("Error updating layer list", e); }
     }
 
+    // Helper to modify history state locally
     const addToHistoryInternal = (json: any, side: 'front' | 'back') => {
-        // =================================================================
-        // [PERBAIKAN 5] TAMBAHKAN TRY-CATCH UNTUK SET HISTORY
-        // =================================================================
-        try {
-            setHistory(prev => {
-                if (!prev || !prev[side]) return prev; 
-                const currentSide = prev[side];
-                const newStack = currentSide.stack.slice(0, currentSide.index + 1);
-                newStack.push(json);
-                if (newStack.length > 20) newStack.shift();
-                
-                return {
-                    ...prev,
-                    [side]: {
-                        stack: newStack,
-                        index: newStack.length - 1
-                    }
-                };
-            });
-        } catch(e) {
-            console.error("History set error:", e);
-        }
+        setHistory(prev => {
+            const currentSide = prev[side];
+            const newStack = currentSide.stack.slice(0, currentSide.index + 1);
+            newStack.push(json);
+            // Limit stack size to 20
+            if (newStack.length > 20) newStack.shift();
+            
+            return {
+                ...prev,
+                [side]: {
+                    stack: newStack,
+                    index: newStack.length - 1
+                }
+            };
+        });
     };
 
-       const addToHistory = (json: any) => {
+    const addToHistory = (json: any) => {
         addToHistoryInternal(json, activeSide);
     };
-    // =================================================================
-    // [PERBAIKAN 6] SAVE CANVAS STATE - SUPER SAFE VERSION
-    // =================================================================
-  const saveCanvasState = (canvas: any, skipHistory: boolean = false) => {
+
+    const saveCanvasState = (canvas: any, skipHistory: boolean = false) => {
         if(!canvas || isLocked) return;
         try {
+            // Guard against disposed canvas or invalid state
             if (canvas.disposed) return;
             
-            let json;
-            try {
-                json = canvas.toJSON(JSON_KEYS);
-            } catch (toJsonError) {
-                console.error("toJSON crash, emergency cleanup...", toJsonError);
-                
-                const objects = canvas.getObjects() || [];
-                const malformedObjects = objects.filter((obj: any) => {
-                    if (obj.type === 'path') {
-                        if (!obj.path || !Array.isArray(obj.path) || obj.path.length === 0) return true;
-                        return obj.path.some((cmd: any) => !Array.isArray(cmd) || cmd.length === 0);
-                    }
-                    return false;
-                });
-                
-                malformedObjects.forEach((obj: any) => {
-                    try { canvas.remove(obj); } catch(e) {}
-                });
-                
-                try {
-                    json = canvas.toJSON(JSON_KEYS);
-                } catch {
-                    return; 
-                }
-            }
+            const json = canvas.toJSON(JSON_KEYS); 
             
+            // Save to Parent (Persistence)
             if (activeSide === 'front') setFrontJson(json);
             else setBackJson(json);
             
-            if (!skipHistory) addToHistory(json);
-            
-        } catch (e) {
-            console.error("Save state error (non-fatal):", e);
-        }
+            // Save to History (Undo/Redo)
+            if (!skipHistory) {
+                addToHistory(json);
+            }
+        } catch (e) { console.error("Save state error", e); }
     };
 
     const handleUndo = () => {
-        // =================================================================
-        // [PERBAIKAN 7] VALIDASI HISTORY SEBELUNDO
-        // =================================================================
         const sideHistory = history[activeSide];
-        if (!sideHistory || sideHistory.index <= 0 || !fabricCanvas.current) return;
+        if (sideHistory.index <= 0 || !fabricCanvas.current) return;
         
         const newIndex = sideHistory.index - 1;
         const json = sideHistory.stack[newIndex];
@@ -673,19 +445,19 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         historyProcessing.current = true;
         
         try {
-            const sanitized = sanitizeJson(json);
-            fabricCanvas.current.loadFromJSON(sanitized, () => {
+            fabricCanvas.current.loadFromJSON(json, () => {
                 fabricCanvas.current.renderAll();
                 historyProcessing.current = false;
                 
+                // Update History Index
                 setHistory(prev => ({
                     ...prev,
                     [activeSide]: { ...prev[activeSide], index: newIndex }
                 }));
                 
+                // Sync with parent state but skip adding to history stack
                 saveCanvasState(fabricCanvas.current, true);
                 updateLayerList(fabricCanvas.current);
-                calculateLayoutScore(fabricCanvas.current);
                 setRefreshKey(prev => prev + 1);
             });
         } catch(e) {
@@ -696,19 +468,14 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
 
     const handleRedo = () => {
         const sideHistory = history[activeSide];
-
-  // =================================================================
-        // [PERBAIKAN 8] VALIDASI HISTORY SEBELUM REDO
-        // =================================================================
-        if (!sideHistory || sideHistory.index >= sideHistory.stack.length - 1 || !fabricCanvas.current) return;
+        if (sideHistory.index >= sideHistory.stack.length - 1 || !fabricCanvas.current) return;
         
         const newIndex = sideHistory.index + 1;
         const json = sideHistory.stack[newIndex];
         
         historyProcessing.current = true;
         try {
-            const sanitized = sanitizeJson(json);
-            fabricCanvas.current.loadFromJSON(sanitized, () => {
+            fabricCanvas.current.loadFromJSON(json, () => {
                 fabricCanvas.current.renderAll();
                 historyProcessing.current = false;
                 
@@ -719,7 +486,6 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                 
                 saveCanvasState(fabricCanvas.current, true);
                 updateLayerList(fabricCanvas.current);
-                calculateLayoutScore(fabricCanvas.current);
                 setRefreshKey(prev => prev + 1);
             });
         } catch(e) {
@@ -737,14 +503,9 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
     const refreshQRCodeImage = (fabricObj: any) => {
         if (!fabricObj || fabricObj.dataField !== 'qr_code') return;
         const QRClass = resolveQR();
-        if (!QRClass) return;
-
         if (qrDebounceRef.current) clearTimeout(qrDebounceRef.current);
 
         qrDebounceRef.current = setTimeout(() => {
-            const SafeQRClass = resolveQR();
-            if (!SafeQRClass) return;
-
             const style = {
                 qrDotStyle: fabricObj.qrDotStyle || 'square',
                 qrColor1: fabricObj.qrColor1 || '#000000',
@@ -776,9 +537,9 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                 else cornerDotType = 'square';
             }
 
-            const qr = new SafeQRClass({
+            const qr = new QRClass({
                 width: 300, height: 300,
-                data: 'https://id-forge.app ', 
+                data: 'https://id-forge.app', 
                 image: style.qrLogoUrl,
                 dotsOptions,
                 cornersSquareOptions: { type: style.qrCornerStyle, color: style.qrCornerColor },
@@ -814,7 +575,6 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
          setRefreshKey(prev => prev + 1);
          saveCanvasState(fabricCanvas.current);
          updateLayerList(fabricCanvas.current);
-         calculateLayoutScore(fabricCanvas.current);
     }
 
     const addText = () => {
@@ -823,7 +583,8 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         if (!fabricCanvas.current || !fabricLib) return;
         const text = new fabricLib.IText('Teks Baru', { 
             left: CR80_WIDTH / 2, top: CR80_HEIGHT / 2, originX: 'center', originY: 'center',
-            fontSize: 16, fontFamily: 'Arial', fill: '#000000'
+            fontSize: 16, fontFamily: 'Arial', fill: '#000000',
+            cornerColor: '#06b6d4', borderColor: '#06b6d4', transparentCorners: false, cornerSize: 10
         });
         addObject(text);
     };
@@ -832,11 +593,22 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         if(isLocked) return;
         const fabricLib = resolveFabric();
         if (!fabricCanvas.current || !fabricLib) return;
-        const opts = { left: CR80_WIDTH / 2, top: CR80_HEIGHT / 2, originX: 'center', originY: 'center', fill: '#3b82f6' };
+        
+        const commonOptions = {
+            left: CR80_WIDTH / 2, top: CR80_HEIGHT / 2, originX: 'center', originY: 'center',
+            fill: '#3b82f6',
+            cornerColor: '#06b6d4', borderColor: '#06b6d4', transparentCorners: false, cornerSize: 10
+        };
+
         let shape;
-        if (type === 'rect') shape = new fabricLib.Rect({ ...opts, width: 100, height: 100 });
-        else if (type === 'circle') shape = new fabricLib.Circle({ ...opts, radius: 50 });
-        else if (type === 'triangle') shape = new fabricLib.Triangle({ ...opts, width: 100, height: 100 });
+        if (type === 'rect') {
+            shape = new fabricLib.Rect({ ...commonOptions, width: 100, height: 100 });
+        } else if (type === 'circle') {
+            shape = new fabricLib.Circle({ ...commonOptions, radius: 50 });
+        } else if (type === 'triangle') {
+            shape = new fabricLib.Triangle({ ...commonOptions, width: 100, height: 100 });
+        }
+
         if (shape) addObject(shape);
     };
 
@@ -845,15 +617,26 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         const fabricLib = resolveFabric();
         if (!fabricCanvas.current || !fabricLib) return;
         try {
+            // Compatibility for v5 (Image) and v6 (FabricImage)
             const ImageClass = fabricLib.FabricImage || fabricLib.Image;
             const imgOpts = url.startsWith('data:') ? {} : { crossOrigin: 'anonymous' };
+            
+            // v5 uses fromURL with callback, v6 returns promise. Handle both.
             if (ImageClass.fromURL.length > 1) {
-                ImageClass.fromURL(url, (img: any) => { if (img) setupImage(img); }, imgOpts);
+                // v5 style callback
+                ImageClass.fromURL(url, (img: any) => {
+                     if (!img) return;
+                     setupImage(img);
+                }, imgOpts);
             } else {
+                // v6 style promise
                 const img = await ImageClass.fromURL(url, imgOpts);
                 setupImage(img);
             }
-        } catch (error) { console.error("Img error", error); }
+        } catch (error) {
+            console.error("Error loading image:", error);
+            alert("Gagal memuat gambar.");
+        }
     };
     
     const setupImage = (img: any) => {
@@ -862,7 +645,8 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         const scale = img.width > maxWidth ? (maxWidth / img.width) : 0.5;
         img.set({ 
             left: CR80_WIDTH / 2, top: CR80_HEIGHT / 2, originX: 'center', originY: 'center', 
-            scaleX: scale, scaleY: scale
+            scaleX: scale, scaleY: scale,
+            cornerColor: '#06b6d4', borderColor: '#06b6d4', transparentCorners: false, cornerSize: 10
         });
         addObject(img);
     }
@@ -883,6 +667,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         const fabricLib = resolveFabric();
         const QRClass = resolveQR();
         if (!fabricCanvas.current || !fabricLib || !QRClass) return;
+        
         const qr = new QRClass({ width: 100, height: 100, data: 'https://id-forge.app' });
         qr.getRawData('png').then((blob: any) => {
            if(blob) {
@@ -890,6 +675,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                reader.onload = async () => {
                    const ImageClass = fabricLib.FabricImage || fabricLib.Image;
                    const result = reader.result as string;
+                   
                    if (ImageClass.fromURL.length > 1) {
                         ImageClass.fromURL(result, (img: any) => setupQR(img));
                    } else {
@@ -905,22 +691,123 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
     const setupQR = (img: any) => {
         img.set({ 
            left: CR80_WIDTH / 2, top: CR80_HEIGHT / 2, originX: 'center', originY: 'center',
-           dataField: 'qr_code', qrDotStyle: 'square', qrCornerStyle: 'square', qrColor1: '#000000', qrBgColor: 'transparent'
+           dataField: 'qr_code', qrDotStyle: 'square', qrCornerStyle: 'square', qrCornerDotStyle: 'square',
+           qrColor1: '#000000', qrBgColor: 'transparent',
+           cornerColor: '#06b6d4', borderColor: '#06b6d4', transparentCorners: false, cornerSize: 10
        });
        addObject(img);
     }
 
+    const applyMask = (type: 'none' | 'circle' | 'rect' | 'rounded') => {
+        if(!fabricCanvas.current || !selectedObject || isLocked) return;
+        const fabricLib = resolveFabric();
+        if (!fabricLib) return;
+
+        // Reset clipPath
+        if (type === 'none') {
+            selectedObject.set({ clipPath: null });
+        } else {
+            // Determine size based on original image dimensions
+            const width = selectedObject.width;
+            const height = selectedObject.height;
+            const size = Math.min(width, height);
+            
+            let clipObj;
+            if (type === 'circle') {
+                clipObj = new fabricLib.Circle({
+                    radius: size / 2,
+                    originX: 'center', originY: 'center',
+                    left: 0, top: 0
+                });
+            } else if (type === 'rounded') {
+                clipObj = new fabricLib.Rect({
+                    width: width, height: height,
+                    rx: width * 0.1, ry: height * 0.1, // 10% roundness
+                    originX: 'center', originY: 'center',
+                    left: 0, top: 0
+                });
+            } else if (type === 'rect') {
+                clipObj = new fabricLib.Rect({
+                    width: width, height: height,
+                    originX: 'center', originY: 'center',
+                    left: 0, top: 0
+                });
+            }
+
+            if (clipObj) {
+                selectedObject.set({ clipPath: clipObj });
+            }
+        }
+        
+        selectedObject.dirty = true;
+        fabricCanvas.current.requestRenderAll();
+        saveCanvasState(fabricCanvas.current);
+        setRefreshKey(prev => prev + 1);
+    };
+
+    // Viewport Controls
+    const togglePanning = () => {
+        const newVal = !isPanning;
+        setIsPanning(newVal);
+        isPanningRef.current = newVal;
+        if(fabricCanvas.current) {
+            fabricCanvas.current.selection = !newVal;
+            fabricCanvas.current.defaultCursor = newVal ? 'grab' : 'default';
+            fabricCanvas.current.hoverCursor = newVal ? 'grab' : 'move';
+            fabricCanvas.current.requestRenderAll();
+        }
+    };
+
+    const handleZoom = (factor: number) => {
+        if(!fabricCanvas.current) return;
+        let newZoom = fabricCanvas.current.getZoom() * factor;
+        if (newZoom > 5) newZoom = 5;
+        if (newZoom < 0.2) newZoom = 0.2;
+        
+        const center = fabricCanvas.current.getCenter();
+        fabricCanvas.current.zoomToPoint({ x: center.left, y: center.top }, newZoom);
+        setZoomLevel(newZoom);
+    };
+
+    const resetZoom = () => {
+        if(!fabricCanvas.current) return;
+        fabricCanvas.current.setViewportTransform([1,0,0,1,0,0]);
+        setZoomLevel(1);
+    };
+
     const updateSelectedObject = async (key: string, value: any) => {
         if (!fabricCanvas.current || !selectedObject || isLocked) return;
         selectedObject.set(key, value);
-        if (key === 'dataField') {
-             if (value && (config as any)[value]) selectedObject.set('text', (config as any)[value]);
-             else if (value === 'fullName') selectedObject.set('text', 'Nama Lengkap');
-             else if (value === 'role') selectedObject.set('text', 'JABATAN');
-        }
-        if (selectedObject.dataField === 'qr_code') refreshQRCodeImage(selectedObject);
-        else fabricCanvas.current.requestRenderAll();
         
+        // --- NEW LOGIC: Update Text Content from Config immediately ---
+        if (key === 'dataField') {
+             if (value && (config as any)[value]) {
+                 // It's a config field (Disclaimer, Address, etc.) -> Show actual text
+                 selectedObject.set('text', (config as any)[value]);
+             } else if (value === 'fullName') {
+                 selectedObject.set('text', 'Nama Lengkap');
+             } else if (value === 'role') {
+                 selectedObject.set('text', 'JABATAN');
+             } else if (value === 'employeeId') {
+                 selectedObject.set('text', '1234567890');
+             } else if (value === 'department') {
+                 selectedObject.set('text', 'Departemen');
+             } else if (value === 'joinedDate') {
+                 selectedObject.set('text', '01-01-2024');
+             } else if (value === 'expiryDate') {
+                 selectedObject.set('text', '01-01-2029');
+             }
+             fabricCanvas.current.requestRenderAll();
+        }
+
+        if (key === 'qrColorType' && value === 'gradient' && !selectedObject.qrColor2) {
+             selectedObject.set('qrColor2', '#000000');
+        }
+        if (selectedObject.dataField === 'qr_code') {
+            refreshQRCodeImage(selectedObject);
+        } else {
+            fabricCanvas.current.requestRenderAll();
+        }
         saveCanvasState(fabricCanvas.current);
         setRefreshKey(prev => prev + 1); 
     };
@@ -936,20 +823,63 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         reader.readAsDataURL(files[0]);
     };
 
+    const applyQRPreset = (presetKey: string) => {
+        if (!fabricCanvas.current || !selectedObject || isLocked) return;
+        const p = QR_PRESETS[presetKey];
+        if (!p || presetKey === 'custom') return;
+        selectedObject.set({ qrDotStyle: p.dot, qrCornerStyle: p.corner, qrCornerDotStyle: p.cornerDot });
+        refreshQRCodeImage(selectedObject);
+        setRefreshKey(prev => prev + 1);
+        saveCanvasState(fabricCanvas.current);
+    }
+
+    const handleAlignment = (type: 'centerH' | 'centerV') => {
+        if (!fabricCanvas.current || !selectedObject || isLocked) return;
+        if (typeof selectedObject.centerH === 'function') selectedObject.centerH();
+        else if (selectedObject.center) {
+             const center = fabricCanvas.current.getCenter();
+             if(type === 'centerH') selectedObject.setX(center.left);
+        }
+        if (typeof selectedObject.centerV === 'function') selectedObject.centerV();
+        else if (selectedObject.center) {
+             const center = fabricCanvas.current.getCenter();
+             if(type === 'centerV') selectedObject.setY(center.top);
+        }
+        selectedObject.setCoords();
+        fabricCanvas.current.renderAll();
+        saveCanvasState(fabricCanvas.current);
+    };
+
+    const handleLayer = (action: 'front' | 'back' | 'forward' | 'backward') => {
+        if (!fabricCanvas.current || !selectedObject || isLocked) return;
+        switch (action) {
+            case 'front': selectedObject.bringToFront(); break;
+            case 'back': selectedObject.sendToBack(); break;
+            case 'forward': selectedObject.bringForward(); break;
+            case 'backward': selectedObject.sendBackwards(); break;
+        }
+        fabricCanvas.current.renderAll();
+        saveCanvasState(fabricCanvas.current);
+        updateLayerList(fabricCanvas.current);
+    };
+
     const handleDuplicate = async () => {
          if (!fabricCanvas.current || !selectedObject || isLocked) return;
          try {
+            // v5 clone needs a callback, v6 returns promise
             if (selectedObject.clone.length > 0) {
-                 selectedObject.clone((cloned: any) => { finishDuplicate(cloned); });
+                 selectedObject.clone((cloned: any) => {
+                     finishDuplicate(cloned);
+                 });
             } else {
                  const cloned = await selectedObject.clone();
                  finishDuplicate(cloned);
             }
-         } catch(e) {}
+         } catch(e) { console.error("Clone error", e); }
     };
 
     const finishDuplicate = (cloned: any) => {
-        if(!fabricCanvas.current || fabricCanvas.current.disposed) return;
+        if(!fabricCanvas.current) return;
         fabricCanvas.current.discardActiveObject();
         cloned.set({ left: cloned.left + 20, top: cloned.top + 20, evented: true });
         if (cloned.type === 'activeSelection') {
@@ -999,7 +929,29 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
             link.download = `design_${activeSide}_HD.png`;
             link.href = dataUrl;
             link.click();
-        } catch (error) { alert("Gagal mengunduh gambar."); }
+        } catch (error) {
+            console.error('Failed to download image', error);
+            alert("Gagal mengunduh gambar.");
+        }
+    };
+
+    const getObjectName = (obj: any) => {
+        if (!obj) return 'Unknown';
+        if (obj.type === 'i-text' || obj.type === 'textbox') return `Teks: "${obj.text?.substring(0, 15)}${obj.text?.length > 15 ? '...' : ''}"`;
+        if (obj.type === 'image' || obj.type === 'fabric-image') return obj.dataField === 'qr_code' ? 'QR Code' : (obj.dataField === 'photoUrl' ? 'Foto Pegawai' : 'Gambar');
+        if (obj.type === 'rect') return 'Kotak';
+        if (obj.type === 'circle') return 'Lingkaran';
+        if (obj.type === 'triangle') return 'Segitiga';
+        return obj.type;
+    };
+
+    const selectObjectFromLayer = (obj: any) => {
+        if (!fabricCanvas.current || isLocked) return;
+        fabricCanvas.current.setActiveObject(obj);
+        fabricCanvas.current.renderAll();
+        setSelectedObject(obj);
+        setActiveTab('properties');
+        setRefreshKey(prev => prev + 1);
     };
 
     const deleteObject = (obj: any) => {
@@ -1010,7 +962,10 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
          updateLayerList(fabricCanvas.current);
          setRefreshKey(prev => prev + 1);
     };
-
+    
+    // UI Helpers
+    const safeInt = (val: string) => { const parsed = parseInt(val); return isNaN(parsed) ? 0 : parsed; }
+    const safeFloat = (val: string) => { const parsed = parseFloat(val); return isNaN(parsed) ? 1 : parsed; }
     const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); if (!isLocked) setIsDragOver(true); };
     const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); };
     const handleDrop = (e: React.DragEvent) => {
@@ -1022,42 +977,16 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
         }
     };
 
-    const handleZoom = (multiplier: number) => {
-        if (!fabricCanvas.current) return;
-        const canvas = fabricCanvas.current;
-        let zoom = canvas.getZoom();
-        zoom = zoom * multiplier;
-        if (zoom > 5) zoom = 5;
-        if (zoom < 0.2) zoom = 0.2;
-        canvas.zoomToPoint({ x: canvas.width / 2, y: canvas.height / 2 }, zoom);
-        setZoomLevel(zoom);
-        canvas.requestRenderAll();
-    };
-
-    const resetZoom = () => {
-        if (!fabricCanvas.current) return;
-        const canvas = fabricCanvas.current;
-        canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
-        setZoomLevel(1);
-        canvas.requestRenderAll();
-    };
-
-    const togglePanning = () => {
-        const nextState = !isPanning;
-        setIsPanning(nextState);
-        isPanningRef.current = nextState;
-        if (fabricCanvas.current) {
-            fabricCanvas.current.selection = !nextState;
-            fabricCanvas.current.defaultCursor = nextState ? 'grab' : 'default';
-            if (nextState) {
-                fabricCanvas.current.discardActiveObject();
-                fabricCanvas.current.requestRenderAll();
-                setSelectedObject(null);
-            }
-        }
-    };
-
-    if (loadError) return <div className="text-white p-8">Gagal memuat editor: {loadError}</div>;
+    if (loadError) {
+        return (
+            <div className="flex h-screen items-center justify-center bg-slate-950 flex-col gap-4 text-center p-8">
+                <AlertTriangle size={48} className="text-red-500" />
+                <h2 className="text-xl font-bold text-white">Editor Gagal Dimuat</h2>
+                <p className="text-slate-400 max-w-md">{loadError}</p>
+                <Button onClick={() => window.location.reload()}>Muat Ulang Halaman</Button>
+            </div>
+        );
+    }
 
     return (
         <div className="flex h-screen overflow-hidden bg-slate-950">
@@ -1076,7 +1005,10 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                 </div>
                 <div className="flex-1" />
                 <Button size="icon" variant="ghost" className="text-red-400 hover:text-red-300" onClick={() => {
-                    if(fabricCanvas.current?.getActiveObject()) deleteObject(fabricCanvas.current.getActiveObject()!);
+                    if(fabricCanvas.current?.getActiveObject()) fabricCanvas.current.remove(fabricCanvas.current.getActiveObject()!);
+                    setSelectedObject(null);
+                    updateLayerList(fabricCanvas.current);
+                    setRefreshKey(prev => prev + 1);
                 }}><Trash2 size={20}/></Button>
             </div>
 
@@ -1084,6 +1016,17 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
             <div className="flex-1 flex flex-col relative">
                 <header className="h-14 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between px-6 backdrop-blur-sm">
                     <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                             {isLocked ? (
+                                 <div className="flex items-center gap-2 bg-green-500/20 text-green-400 border border-green-500/50 px-3 py-1 rounded-full text-xs font-bold animate-pulse">
+                                     <Lock size={12} /> STATUS: SIAP CETAK
+                                 </div>
+                             ) : (
+                                 <div className="flex items-center gap-2 bg-blue-500/20 text-blue-400 border border-blue-500/50 px-3 py-1 rounded-full text-xs font-bold">
+                                     <PenTool size={12} /> MODE EDIT
+                                 </div>
+                             )}
+                        </div>
                         <div className="flex bg-slate-800 p-1 rounded-lg">
                             <button onClick={() => setActiveSide('front')} className={cn("px-4 py-1 text-xs font-bold rounded-md transition-all", activeSide === 'front' ? "bg-blue-600 text-white shadow" : "text-slate-400 hover:text-slate-200")}>DEPAN</button>
                             <button onClick={() => setActiveSide('back')} className={cn("px-4 py-1 text-xs font-bold rounded-md transition-all", activeSide === 'back' ? "bg-blue-600 text-white shadow" : "text-slate-400 hover:text-slate-200")}>BELAKANG</button>
@@ -1091,27 +1034,64 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                     </div>
                     <div className="flex gap-2">
                          <div className="flex gap-1 mr-2 border-r border-slate-700 pr-2">
-                            <Button size="icon" variant="ghost" disabled={isLocked || !history[activeSide] || history[activeSide].index <= 0} onClick={handleUndo}><Undo size={16}/></Button>
-                            <Button size="icon" variant="ghost" disabled={isLocked || !history[activeSide] || history[activeSide].index >= history[activeSide].stack.length - 1} onClick={handleRedo}><Redo size={16}/></Button>
+                            <Button size="icon" variant="ghost" disabled={isLocked || history[activeSide].index <= 0} onClick={handleUndo} className="text-slate-400 hover:text-white disabled:opacity-30" title="Undo">
+                                <Undo size={16}/>
+                            </Button>
+                            <Button size="icon" variant="ghost" disabled={isLocked || history[activeSide].index >= history[activeSide].stack.length - 1} onClick={handleRedo} className="text-slate-400 hover:text-white disabled:opacity-30" title="Redo">
+                                <Redo size={16}/>
+                            </Button>
                          </div>
-                        <Button size="sm" variant="outline" className="border-cyan-500/50 text-cyan-400" onClick={handleDownloadImage}><Download size={16} className="mr-2"/> Unduh HD</Button>
-                        <Button size="sm" className={isLocked ? "bg-slate-800 text-slate-300" : "bg-green-600 text-black"} onClick={() => setIsLocked(!isLocked)}>
-                            {isLocked ? <><Unlock size={16} className="mr-2"/> Buka Kunci</> : <><CheckCircle size={16} className="mr-2"/> Kunci</>}
+                         <Button size="sm" variant="outline" className="border-cyan-500/50 text-cyan-400 hover:bg-cyan-900/20" onClick={handleDownloadImage} title="Unduh Gambar HD">
+                            <Download size={16} className="mr-2"/> Unduh HD
+                        </Button>
+                        <Button 
+                            size="sm" 
+                            className={cn(
+                                "font-bold transition-all border", 
+                                isLocked 
+                                    ? "bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700" 
+                                    : "bg-green-600 text-black border-green-500 hover:bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]"
+                            )}
+                            onClick={() => setIsLocked(!isLocked)}
+                        >
+                            {isLocked ? (
+                                <><Unlock size={16} className="mr-2"/> Buka Kunci (Edit)</>
+                            ) : (
+                                <><CheckCircle size={16} className="mr-2"/> Kunci & Siap Cetak</>
+                            )}
                         </Button>
                         {!isLocked && (
                             <>
-                                <Button size="sm" variant="secondary" onClick={() => setShowSmartPreview(true)}><Box size={16} className="mr-2"/> Preview 3D</Button>
+                                <Button size="sm" variant="outline" className="text-purple-400 border-purple-500/50 hover:bg-purple-900/20" onClick={handleAiDesignCritique}>
+                                    <Sparkles size={16} className="mr-2"/> Kritik AI
+                                </Button>
                                 <Button size="sm" variant="outline" onClick={() => {
                                     const name = prompt("Nama Templat:");
                                     if(name) {
                                         setTemplates([...templates, { 
                                             id: Date.now().toString(), name, category: 'CUSTOM', 
-                                            layout: { front: { background: bgFront, elements: [], json: frontJson }, back: { background: bgBack, elements: [], json: backJson } },
-                                            config: { enablePattern: config.enablePattern, patternText: config.patternText }
+                                            layout: { 
+                                                front: { background: bgFront, elements: [], json: frontJson },
+                                                back: { background: bgBack, elements: [], json: backJson }
+                                            },
+                                            // -- ADDED: Save Configuration into Template --
+                                            config: {
+                                                enablePattern: config.enablePattern,
+                                                patternText: config.patternText,
+                                                patternLayout: config.patternLayout,
+                                                patternColor: config.patternColor,
+                                                patternOpacity: config.patternOpacity,
+                                                patternRotation: config.patternRotation,
+                                                patternSpacing: config.patternSpacing,
+                                                patternFontSize: config.patternFontSize,
+                                                enableWatermark: config.enableWatermark,
+                                                watermarkOpacity: config.watermarkOpacity,
+                                                watermarkScale: config.watermarkScale
+                                            }
                                         } as any]);
                                         alert("Templat Disimpan!");
                                     }
-                                }}><Save size={16} className="mr-2"/> Simpan</Button>
+                                }}><Save size={16} className="mr-2"/> Simpan Templat</Button>
                             </>
                         )}
                     </div>
@@ -1120,7 +1100,7 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                 <div className="flex-1 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-slate-950 flex items-center justify-center overflow-hidden p-8 relative"
                      onClick={(e) => {
                          if (e.target !== e.currentTarget) return;
-                         if(fabricCanvas.current && !fabricCanvas.current.disposed) {
+                         if(fabricCanvas.current) {
                              fabricCanvas.current.discardActiveObject();
                              fabricCanvas.current.requestRenderAll();
                              setSelectedObject(null);
@@ -1152,10 +1132,6 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                             </div>
                         )}
 
-                        {!isLocked && layoutScore < 100 && (
-                            <div className="absolute inset-0 pointer-events-none border border-red-500/30 border-dashed" style={{margin: SAFE_MARGIN}}></div>
-                        )}
-
                         <canvas ref={canvasRef} width={CR80_WIDTH} height={CR80_HEIGHT} />
                         
                         {isDragOver && !isLocked && (
@@ -1167,174 +1143,252 @@ export const DesignEditor: React.FC<DesignEditorProps> = ({
                             </div>
                         )}
 
-                        {/* ZOOM CONTROLS */}
-                        <div className="absolute bottom-4 right-4 flex flex-col gap-2 bg-slate-900/80 backdrop-blur rounded-lg p-2 border border-slate-700 z-40 shadow-xl">
-                            <Button size="icon" variant="ghost" onClick={() => handleZoom(1.1)} className="h-8 w-8 text-cyan-400"><ZoomIn size={16}/></Button>
-                            <Button size="icon" variant="ghost" onClick={() => handleZoom(0.9)} className="h-8 w-8 text-cyan-400"><ZoomOut size={16}/></Button>
-                            <Button size="icon" variant="ghost" onClick={resetZoom} className="h-8 w-8 text-slate-400" title="Reset Zoom"><Maximize size={16}/></Button>
-                            <div className="h-px bg-slate-700 my-1"/>
-                            <Button size="icon" variant="ghost" onClick={togglePanning} className={cn("h-8 w-8", isPanning ? "bg-cyan-600 text-black" : "text-slate-400")} title="Mode Geser"><Move size={16}/></Button>
-                            <div className="text-[10px] text-center font-mono text-slate-500 mt-1">{Math.round(zoomLevel * 100)}%</div>
-                        </div>
-
-                        {/* AI LAYOUT WIDGET */}
-                        {!isLocked && (
-                            <div className="absolute top-4 left-4 z-40 flex flex-col gap-2">
-                                <div className={cn("p-3 rounded-xl backdrop-blur-md border shadow-xl transition-all w-64", layoutScore === 100 ? "bg-green-950/80 border-green-500/30" : "bg-slate-900/80 border-amber-500/30")}>
-                                    <div className="flex justify-between items-center mb-2">
-                                        <div className="flex items-center gap-2">
-                                            <MonitorCheck size={16} className={layoutScore === 100 ? "text-green-400" : "text-amber-400"}/>
-                                            <span className="text-xs font-bold text-white uppercase tracking-wider">Layout AI</span>
-                                        </div>
-                                        <div className={cn("text-xs font-mono font-bold px-2 py-0.5 rounded", layoutScore === 100 ? "bg-green-500 text-black" : "bg-amber-500 text-black")}>
-                                            {layoutScore}%
-                                        </div>
-                                    </div>
-                                    {layoutScore < 100 ? (
-                                        <div className="space-y-2">
-                                            <div className="text-[10px] text-slate-300 bg-black/20 p-2 rounded border border-white/5">
-                                                <ul className="list-disc list-inside space-y-1">
-                                                    {layoutIssues.slice(0, 3).map((issue, idx) => <li key={idx} className="text-amber-200">{issue}</li>)}
-                                                </ul>
-                                            </div>
-                                            <Button size="sm" onClick={handleAutoOptimize} className="w-full bg-amber-600 hover:bg-amber-500 text-white border-0 text-[10px] font-bold h-8">
-                                                <Wand2 size={12} className="mr-1.5"/> Auto-Optimize
-                                            </Button>
-                                        </div>
-                                    ) : (
-                                        <div className="text-[10px] text-green-200 flex items-center gap-1"><CheckCircle size={10}/> Desain optimal.</div>
-                                    )}
+                        {isLocked && (
+                            <div className="absolute inset-0 pointer-events-none z-50 border-4 border-green-500/20 flex items-center justify-center">
+                                <div className="bg-black/50 p-2 rounded-full backdrop-blur-sm border border-green-500/30">
+                                    <Lock size={24} className="text-green-400 opacity-50"/>
                                 </div>
                             </div>
                         )}
+
+                        {/* ZOOM CONTROLS */}
+                        <div className="absolute bottom-4 right-4 flex flex-col gap-2 bg-slate-900/80 backdrop-blur rounded-lg p-2 border border-slate-700 z-40 shadow-xl">
+                            <Button size="icon" variant="ghost" onClick={() => handleZoom(1.1)} className="h-8 w-8 text-cyan-400 hover:bg-cyan-900/50"><ZoomIn size={16}/></Button>
+                            <Button size="icon" variant="ghost" onClick={() => handleZoom(0.9)} className="h-8 w-8 text-cyan-400 hover:bg-cyan-900/50"><ZoomOut size={16}/></Button>
+                            <Button size="icon" variant="ghost" onClick={resetZoom} className="h-8 w-8 text-slate-400 hover:bg-slate-700" title="Reset Zoom"><Maximize size={16}/></Button>
+                            <div className="h-px bg-slate-700 my-1"/>
+                            <Button size="icon" variant="ghost" onClick={togglePanning} className={cn("h-8 w-8", isPanning ? "bg-cyan-600 text-black hover:bg-cyan-500" : "text-slate-400 hover:bg-slate-700")} title="Mode Geser (Pan)"><Move size={16}/></Button>
+                            <div className="text-[10px] text-center font-mono text-slate-500 mt-1">{Math.round(zoomLevel * 100)}%</div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Smart Card Preview Modal */}
-            {showSmartPreview && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in">
-                    <div className="w-full max-w-4xl h-[90vh] flex flex-col p-4">
-                        <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-2xl font-display font-bold text-white flex items-center gap-2"><Box className="text-purple-400"/> 3D Preview</h2>
-                            <button onClick={() => setShowSmartPreview(false)} className="text-slate-400 hover:text-white bg-slate-800/50 p-2 rounded-full"><X size={24}/></button>
-                        </div>
-                        <div className="flex-1 flex items-center justify-center">
-                            <SmartCardPreview frontJson={frontJson} backJson={backJson} bgFront={bgFront} bgBack={bgBack} config={config} member={MOCK_PREVIEW_MEMBER} />
-                        </div>
-                    </div>
+            {/* Right Properties Panel */}
+            <div className={cn("w-80 bg-slate-900 border-l border-slate-800 flex flex-col h-full transition-all", isLocked && "opacity-50 pointer-events-none grayscale")}>
+                
+                <div className="flex border-b border-slate-800">
+                    <button onClick={() => setActiveTab('properties')} className={cn("flex-1 py-3 text-xs font-bold uppercase transition-colors border-b-2", activeTab === 'properties' ? "border-blue-500 text-white bg-slate-800" : "border-transparent text-slate-500 hover:text-slate-300")}>Properti</button>
+                    <button onClick={() => setActiveTab('layers')} className={cn("flex-1 py-3 text-xs font-bold uppercase transition-colors border-b-2", activeTab === 'layers' ? "border-blue-500 text-white bg-slate-800" : "border-transparent text-slate-500 hover:text-slate-300")}>Layers ({canvasObjects.length})</button>
                 </div>
-            )}
 
-            {/* Right Properties Sidebar */}
-            {!isLocked && (
-                <div className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col z-10">
-                    <div className="flex border-b border-slate-800">
-                        <button onClick={() => setActiveTab('properties')} className={cn("flex-1 py-3 text-xs font-bold uppercase tracking-wider", activeTab === 'properties' ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-300")}>Properti</button>
-                        <button onClick={() => setActiveTab('layers')} className={cn("flex-1 py-3 text-xs font-bold uppercase tracking-wider", activeTab === 'layers' ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-300")}>Layer ({canvasObjects.length})</button>
-                    </div>
-                    
-                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-                        {activeTab === 'properties' ? (
-                            selectedObject ? (
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {activeTab === 'properties' && (
+                        <>
+                            <div className="space-y-3">
+                                <Label>Warna Latar</Label>
+                                <div className="flex gap-2">
+                                    <Input type="color" className="w-12 h-10 p-1" value={activeSide==='front'?bgFront:bgBack} onChange={(e) => updateBackgroundColor(e.target.value)} disabled={isLocked} />
+                                    <Input type="text" value={activeSide==='front'?bgFront:bgBack} onChange={(e) => updateBackgroundColor(e.target.value)} disabled={isLocked} />
+                                </div>
+                            </div>
+                            
+                            {!selectedObject && (
+                                <div className="space-y-6 animate-in fade-in pt-4 border-t border-slate-800">
+                                     <div>
+                                         <div className="flex items-center justify-between mb-2"><Label className="flex items-center gap-2 text-blue-400 font-bold"><Grip size={14}/> Teks Pola</Label><input type="checkbox" checked={config.enablePattern} onChange={(e) => setConfig({...config, enablePattern: e.target.checked})} className="accent-blue-600 w-4 h-4"/></div>
+                                         <div className={cn("space-y-3 p-3 bg-slate-800/50 rounded-lg", !config.enablePattern && "opacity-50 pointer-events-none")}>
+                                             <Input value={config.patternText} onChange={(e) => setConfig({...config, patternText: e.target.value})} className="h-8"/>
+                                             <input type="range" min="0.01" max="0.5" step="0.01" className="w-full accent-blue-600" value={config.patternOpacity} onChange={(e) => setConfig({...config, patternOpacity: parseFloat(e.target.value)})} />
+                                         </div>
+                                     </div>
+                                </div>
+                            )}
+
+                            {selectedObject && (
                                 <>
-                                    <div className="text-xs font-bold text-cyan-500 uppercase tracking-widest mb-2">Properti Objek</div>
-                                    {selectedObject.type === 'i-text' && (
-                                        <div className="space-y-3">
-                                            <div className="space-y-1">
-                                                <Label>Konten Teks</Label>
-                                                <Input value={selectedObject.text} onChange={e => updateSelectedObject('text', e.target.value)} />
-                                            </div>
-                                            <div className="space-y-1">
-                                                <Label>Sumber Data (Dinamis)</Label>
-                                                <Select value={selectedObject.dataField || ''} onChange={e => updateSelectedObject('dataField', e.target.value)}>
-                                                    <option value="">Teks Statis</option>
-                                                    <option value="fullName">Nama Lengkap</option>
-                                                    <option value="role">Jabatan</option>
-                                                    <option value="employeeId">NIP / ID</option>
-                                                    <option value="department">Departemen</option>
-                                                </Select>
-                                            </div>
-                                            <div className="space-y-1">
-                                                <Label>Ukuran Font</Label>
-                                                <div className="flex gap-2">
-                                                    <Button size="sm" variant="outline" onClick={() => updateSelectedObject('fontSize', (selectedObject.fontSize || 20) - 2)}>-</Button>
-                                                    <span className="flex-1 text-center bg-slate-800 py-2 rounded text-xs">{selectedObject.fontSize}</span>
-                                                    <Button size="sm" variant="outline" onClick={() => updateSelectedObject('fontSize', (selectedObject.fontSize || 20) + 2)}>+</Button>
-                                                </div>
-                                            </div>
-                                            <div className="space-y-1">
-                                                <Label>Warna</Label>
-                                                <div className="flex gap-2">
-                                                    <Input type="color" value={selectedObject.fill} onChange={e => updateSelectedObject('fill', e.target.value)} className="w-10 p-0 overflow-hidden" />
-                                                    <Input value={selectedObject.fill} onChange={e => updateSelectedObject('fill', e.target.value)} className="flex-1" />
-                                                </div>
+                                    <div className="h-px bg-slate-800 my-4" />
+                                    <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
+                                        <div className="flex justify-between items-center">
+                                            <Label className="uppercase text-xs text-blue-400 font-bold">{selectedObject.type}</Label>
+                                            <div className="flex gap-1">
+                                                <Button size="icon" variant="ghost" className="h-6 w-6 text-slate-400" onClick={handleDuplicate} title="Duplikat"><Copy size={12}/></Button>
                                             </div>
                                         </div>
-                                    )}
-                                    {selectedObject.type !== 'i-text' && (
-                                        <div className="space-y-3">
-                                            {selectedObject.type === 'image' && (
-                                                <div className="space-y-1">
-                                                    <Label>Sumber Gambar</Label>
-                                                    <Select value={selectedObject.dataField || ''} onChange={e => updateSelectedObject('dataField', e.target.value)}>
-                                                        <option value="">Gambar Statis</option>
-                                                        <option value="photoUrl">Foto Pegawai</option>
-                                                        <option value="qr_code">QR Code Profil</option>
+                                        <div className="grid grid-cols-4 gap-2 bg-slate-800 p-2 rounded-lg">
+                                            <Button size="icon" variant="secondary" className="h-8 w-full" onClick={() => handleAlignment('centerH')}><AlignCenter size={14}/></Button>
+                                            <Button size="icon" variant="secondary" className="h-8 w-full" onClick={() => handleAlignment('centerV')}><AlignVerticalJustifyCenter size={14}/></Button>
+                                            <Button size="icon" variant="secondary" className="h-8 w-full" onClick={() => handleLayer('front')}><Layers size={14} className="rotate-180"/></Button>
+                                            <Button size="icon" variant="secondary" className="h-8 w-full" onClick={() => handleLayer('back')}><Layers size={14}/></Button>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-1"><Label className="text-xs">Opasitas</Label><Input type="number" min="0" max="1" step="0.1" value={selectedObject.opacity ?? 1} onChange={(e) => updateSelectedObject('opacity', safeFloat(e.target.value))} /></div>
+                                            <div className="space-y-1"><Label className="text-xs">Sudut</Label><Input type="number" value={Math.round(selectedObject.angle || 0)} onChange={(e) => updateSelectedObject('angle', safeInt(e.target.value))} /></div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-1"><Label className="text-xs">Kiri</Label><Input type="number" value={Math.round(selectedObject.left || 0)} onChange={(e) => updateSelectedObject('left', safeInt(e.target.value))} /></div>
+                                            <div className="space-y-1"><Label className="text-xs">Atas</Label><Input type="number" value={Math.round(selectedObject.top || 0)} onChange={(e) => updateSelectedObject('top', safeInt(e.target.value))} /></div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Skala</Label>
+                                            <input type="range" min="0.1" max="2.0" step="0.05" className="w-full accent-blue-600 h-1.5 bg-slate-800 rounded-lg" value={selectedObject.scaleX || 1} onChange={(e) => { const val = parseFloat(e.target.value); selectedObject.set({ scaleX: val, scaleY: val }); fabricCanvas.current?.requestRenderAll(); saveCanvasState(fabricCanvas.current!); setRefreshKey(prev => prev + 1); }} />
+                                        </div>
+
+                                        {(selectedObject.type === 'i-text' || selectedObject.type === 'textbox') && (
+                                            <div className="space-y-4 pt-4 border-t border-slate-800">
+                                                <div className="space-y-2"><Label>Konten</Label><textarea className="flex w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm" rows={3} value={(selectedObject as any).text} onChange={(e) => updateSelectedObject('text', e.target.value)} /></div>
+                                                <div className="space-y-2">
+                                                    <Label>Jenis Font</Label>
+                                                    <Select value={(selectedObject as any).fontFamily || 'Arial'} onChange={(e) => updateSelectedObject('fontFamily', e.target.value)}>
+                                                        {AVAILABLE_FONTS.map(font => (
+                                                            <option key={font} value={font} style={{fontFamily: font}}>{font}</option>
+                                                        ))}
                                                     </Select>
                                                 </div>
-                                            )}
-                                            <div className="space-y-1">
-                                                <Label>Warna Isi</Label>
-                                                <div className="flex gap-2">
-                                                    <Input type="color" value={selectedObject.fill} onChange={e => updateSelectedObject('fill', e.target.value)} className="w-10 p-0 overflow-hidden" />
-                                                    <Input value={selectedObject.fill} onChange={e => updateSelectedObject('fill', e.target.value)} className="flex-1" />
+                                                <div className="space-y-2"><Label>Warna</Label><Input type="color" className="h-10 p-1" value={(selectedObject as any).fill as string} onChange={(e) => updateSelectedObject('fill', e.target.value)} /></div>
+                                                <div className="space-y-2">
+                                                    <Label>Sumber Data</Label>
+                                                    <Select value={(selectedObject as any).dataField || ''} onChange={(e) => updateSelectedObject('dataField', e.target.value)}>
+                                                        <option value="">Teks Statis (Manual)</option>
+                                                        <optgroup label="Data Pegawai">
+                                                            <option value="fullName">Nama Lengkap</option>
+                                                            <option value="role">Jabatan</option>
+                                                            <option value="employeeId">NIP / ID</option>
+                                                            <option value="department">Departemen</option>
+                                                            <option value="joinedDate">Tanggal Bergabung</option>
+                                                            <option value="expiryDate">Tanggal Kadaluarsa</option>
+                                                        </optgroup>
+                                                        <optgroup label="Data Instansi (Pengaturan)">
+                                                            <option value="name">Nama Instansi</option>
+                                                            <option value="secondaryName">Nama Sekunder</option>
+                                                            <option value="address">Alamat Lengkap</option>
+                                                            <option value="disclaimer">Disclaimer (Belakang)</option>
+                                                            <option value="regulations">Peraturan</option>
+                                                        </optgroup>
+                                                    </Select>
                                                 </div>
                                             </div>
-                                            <div className="space-y-1">
-                                                <Label>Opacity</Label>
-                                                <input type="range" min="0" max="1" step="0.1" value={selectedObject.opacity || 1} onChange={e => updateSelectedObject('opacity', parseFloat(e.target.value))} className="w-full accent-cyan-500" />
+                                        )}
+                                        
+                                        {(selectedObject.type === 'image' || selectedObject.type === 'fabric-image') && (
+                                            <div className="space-y-4 pt-4 border-t border-slate-800">
+                                                <Label>Sumber Data</Label>
+                                                <Select value={(selectedObject as any).dataField || ''} onChange={(e) => updateSelectedObject('dataField', e.target.value)}><option value="">Gambar Statis</option><option value="photoUrl">Foto Pegawai</option><option value="qr_code">QR Code</option></Select>
+                                                
+                                                {/* --- MASKING / CLIPPING SECTION --- */}
+                                                {(selectedObject.dataField !== 'qr_code') && (
+                                                    <div className="space-y-3 pt-2">
+                                                        <Label className="flex items-center gap-2 text-cyan-400"><Scissors size={14}/> Masking / Clipping</Label>
+                                                        <div className="grid grid-cols-4 gap-2">
+                                                            <Button size="icon" variant="outline" className="h-8 w-full border-slate-700" onClick={() => applyMask('none')} title="Hapus Masking">
+                                                                <Ban size={14} className="text-red-400"/>
+                                                            </Button>
+                                                            <Button size="icon" variant="outline" className="h-8 w-full border-slate-700" onClick={() => applyMask('circle')} title="Lingkaran">
+                                                                <Circle size={14}/>
+                                                            </Button>
+                                                            <Button size="icon" variant="outline" className="h-8 w-full border-slate-700" onClick={() => applyMask('rect')} title="Kotak">
+                                                                <Square size={14}/>
+                                                            </Button>
+                                                            <Button size="icon" variant="outline" className="h-8 w-full border-slate-700" onClick={() => applyMask('rounded')} title="Rounded">
+                                                                <div className="w-3.5 h-3.5 border-2 border-current rounded-md"></div>
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {(selectedObject as any).dataField === 'qr_code' && (
+                                                    <div className="space-y-4 pt-2">
+                                                        <Label className="text-xs text-blue-400">Preset QR Cepat</Label>
+                                                        <div className="grid grid-cols-3 gap-2 pb-4 border-b border-slate-800">{Object.entries(QR_PRESETS).map(([k,v]:[string, any])=><Button key={k} size="sm" variant="outline" onClick={()=>applyQRPreset(k)} className="text-[10px] h-6 px-1">{v.name}</Button>)}</div>
+                                                        
+                                                        <div className="space-y-4">
+                                                            <h4 className="text-xs font-bold text-slate-300">Gaya & Bentuk</h4>
+                                                            <div className="space-y-2">
+                                                                <Label className="text-[10px] text-slate-400">Pola Titik (Dots)</Label>
+                                                                <Select value={selectedObject.qrDotStyle || 'square'} onChange={(e) => updateSelectedObject('qrDotStyle', e.target.value)}>
+                                                                    <option value="square">Kotak (Square)</option>
+                                                                    <option value="dots">Titik (Dots)</option>
+                                                                    <option value="rounded">Bulat (Rounded)</option>
+                                                                    <option value="extra-rounded">Sangat Bulat</option>
+                                                                    <option value="classy">Classy</option>
+                                                                    <option value="classy-rounded">Classy Rounded</option>
+                                                                </Select>
+                                                            </div>
+                                                            <div className="grid grid-cols-2 gap-2">
+                                                                <div className="space-y-1">
+                                                                    <Label className="text-[10px] text-slate-400">Sudut Luar</Label>
+                                                                    <Select value={selectedObject.qrCornerStyle || 'square'} onChange={(e) => updateSelectedObject('qrCornerStyle', e.target.value)}>
+                                                                        <option value="square">Kotak</option>
+                                                                        <option value="dot">Titik</option>
+                                                                        <option value="extra-rounded">Bulat</option>
+                                                                    </Select>
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    <Label className="text-[10px] text-slate-400">Sudut Dalam</Label>
+                                                                    <Select value={selectedObject.qrCornerDotStyle || 'square'} onChange={(e) => updateSelectedObject('qrCornerDotStyle', e.target.value)}>
+                                                                        <option value="square">Kotak</option>
+                                                                        <option value="dot">Titik</option>
+                                                                    </Select>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="space-y-4 pt-2 border-t border-slate-800">
+                                                             <h4 className="text-xs font-bold text-slate-300 flex justify-between">Warna & Gradien <Palette size={12}/></h4>
+                                                             <div className="flex gap-2">
+                                                                 <button onClick={() => updateSelectedObject('qrColorType', 'single')} className={cn("flex-1 text-[10px] py-1 rounded border", selectedObject.qrColorType !== 'gradient' ? "bg-blue-600 border-blue-500 text-white" : "border-slate-700 text-slate-400")}>Solid</button>
+                                                                 <button onClick={() => updateSelectedObject('qrColorType', 'gradient')} className={cn("flex-1 text-[10px] py-1 rounded border", selectedObject.qrColorType === 'gradient' ? "bg-blue-600 border-blue-500 text-white" : "border-slate-700 text-slate-400")}>Gradien</button>
+                                                             </div>
+                                                             
+                                                             <div className="grid grid-cols-2 gap-2">
+                                                                <div className="space-y-1">
+                                                                     <Label className="text-[10px]">Warna Utama</Label>
+                                                                     <div className="flex gap-1"><Input type="color" className="p-0.5 h-8 w-8" value={selectedObject.qrColor1 || '#000000'} onChange={(e) => updateSelectedObject('qrColor1', e.target.value)} /><Input value={selectedObject.qrColor1 || '#000000'} className="h-8 text-[10px]" onChange={(e) => updateSelectedObject('qrColor1', e.target.value)} /></div>
+                                                                </div>
+                                                                {selectedObject.qrColorType === 'gradient' && (
+                                                                     <div className="space-y-1 animate-in fade-in">
+                                                                         <Label className="text-[10px]">Warna Kedua</Label>
+                                                                         <div className="flex gap-1"><Input type="color" className="p-0.5 h-8 w-8" value={selectedObject.qrColor2 || '#000000'} onChange={(e) => updateSelectedObject('qrColor2', e.target.value)} /><Input value={selectedObject.qrColor2 || '#000000'} className="h-8 text-[10px]" onChange={(e) => updateSelectedObject('qrColor2', e.target.value)} /></div>
+                                                                     </div>
+                                                                )}
+                                                             </div>
+
+                                                             <div className="space-y-1">
+                                                                <Label className="text-[10px]">Background</Label>
+                                                                <div className="flex gap-1"><Input type="color" className="p-0.5 h-8 w-8" value={selectedObject.qrBgColor || '#ffffff'} onChange={(e) => updateSelectedObject('qrBgColor', e.target.value)} /><Input value={selectedObject.qrBgColor || 'transparent'} className="h-8 text-[10px]" onChange={(e) => updateSelectedObject('qrBgColor', e.target.value)} /></div>
+                                                             </div>
+                                                        </div>
+
+                                                        <div className="space-y-4 pt-2 border-t border-slate-800">
+                                                            <h4 className="text-xs font-bold text-slate-300">Logo Tengah</h4>
+                                                            <div className="flex gap-2 items-center">
+                                                                {selectedObject.qrLogoUrl ? <img src={selectedObject.qrLogoUrl} className="w-10 h-10 object-contain bg-white/10 rounded" alt="qr-logo"/> : <div className="w-10 h-10 bg-slate-800 rounded flex items-center justify-center"><ImageIcon size={16} className="text-slate-500"/></div>}
+                                                                <div className="flex-1">
+                                                                     <input type="file" id="qr-logo-upload" className="hidden" accept="image/*" onChange={handleQRLogoUpload} />
+                                                                     <Button size="sm" variant="secondary" className="w-full text-[10px] h-7" onClick={() => document.getElementById('qr-logo-upload')?.click()}>Upload Logo</Button>
+                                                                </div>
+                                                                {selectedObject.qrLogoUrl && <Button size="icon" variant="ghost" className="h-7 w-7 text-red-400" onClick={() => updateSelectedObject('qrLogoUrl', '')}><Trash2 size={12}/></Button>}
+                                                            </div>
+                                                            {selectedObject.qrLogoUrl && (
+                                                                <div className="space-y-1">
+                                                                    <div className="flex justify-between text-[10px] text-slate-400"><span>Ukuran Logo</span><span>{Math.round((selectedObject.qrLogoSize || 0.4) * 100)}%</span></div>
+                                                                    <input type="range" min="0.1" max="0.5" step="0.05" className="w-full h-1.5 bg-slate-800 rounded-lg accent-blue-600" value={selectedObject.qrLogoSize || 0.4} onChange={(e) => updateSelectedObject('qrLogoSize', parseFloat(e.target.value))} />
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
-                                        </div>
-                                    )}
-                                    <div className="pt-4 border-t border-slate-800 space-y-2">
-                                        <Button size="sm" variant="secondary" className="w-full" onClick={handleDuplicate}><Copy size={14} className="mr-2"/> Duplikat</Button>
-                                        <Button size="sm" variant="destructive" className="w-full" onClick={() => deleteObject(selectedObject)}><Trash2 size={14} className="mr-2"/> Hapus</Button>
+                                        )}
                                     </div>
                                 </>
-                            ) : (
-                                <div className="text-center text-slate-500 text-sm mt-10">
-                                    <p>Pilih objek di kanvas untuk mengedit properti.</p>
+                            )}
+                        </>
+                    )}
+
+                    {activeTab === 'layers' && (
+                        <div className="space-y-2 animate-in fade-in">
+                            {canvasObjects.length === 0 ? <div className="text-center text-slate-500 text-xs py-8">Kosong</div> : canvasObjects.map((obj, i) => (
+                                <div key={i} className={cn("flex items-center gap-3 p-2 rounded-lg border cursor-pointer", obj === selectedObject ? "bg-blue-900/30 border-blue-500/50" : "bg-slate-900 border-slate-800")} onClick={() => selectObjectFromLayer(obj)}>
+                                    <div className="text-slate-500">{obj.type === 'i-text' || obj.type === 'textbox' ? <Type size={14}/> : (obj.type === 'rect' ? <Square size={14}/> : (obj.type === 'circle' ? <Circle size={14}/> : <Triangle size={14}/>))}</div>
+                                    <div className="flex-1 truncate text-xs font-medium text-slate-300">{getObjectName(obj)}</div>
+                                    <button className="text-slate-400 hover:text-white p-1" onClick={(e) => { e.stopPropagation(); deleteObject(obj); }}><Trash2 size={12}/></button>
                                 </div>
-                            )
-                        ) : (
-                            // LAYERS TAB CONTENT
-                            <div className="space-y-2">
-                                {canvasObjects.map((obj, i) => (
-                                    <div key={i} 
-                                        className={cn(
-                                            "flex items-center gap-2 p-2 rounded cursor-pointer border border-transparent", 
-                                            selectedObject === obj ? "bg-cyan-900/30 border-cyan-500/30 text-cyan-200" : "hover:bg-slate-800 text-slate-400"
-                                        )}
-                                        onClick={() => {
-                                            if(fabricCanvas.current) {
-                                                fabricCanvas.current.setActiveObject(obj);
-                                                fabricCanvas.current.requestRenderAll();
-                                                setSelectedObject(obj);
-                                            }
-                                        }}
-                                    >
-                                        {obj.type === 'i-text' ? <Type size={14}/> : obj.type === 'image' ? <ImageIcon size={14}/> : <Square size={14}/>}
-                                        <span className="text-xs truncate flex-1">{obj.type === 'i-text' ? (obj.text || 'Teks') : (obj.dataField || obj.type)}</span>
-                                        <button onClick={(e) => { e.stopPropagation(); deleteObject(obj); }} className="text-slate-600 hover:text-red-400"><X size={12}/></button>
-                                    </div>
-                                ))}
-                                {canvasObjects.length === 0 && <div className="text-center text-slate-600 text-xs italic py-4">Kosong</div>}
-                            </div>
-                        )}
-                    </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
-            )}
+            </div>
         </div>
     );
 };

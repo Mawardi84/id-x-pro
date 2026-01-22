@@ -115,9 +115,6 @@ export interface CardElement {
     fontStyle?: 'normal' | 'italic';
     borderWidth?: number;
     borderColor?: string;
-    // Smart Features
-    smartType?: 'NONE' | 'ROLE_COLOR' | 'DEPT_COLOR' | 'VAR_TYPO' | 'UV_TEXT';
-    
     // QR Specific Styles
     qrDotStyle?: 'square' | 'dots' | 'rounded' | 'classy' | 'classy-rounded' | 'extra-rounded';
     qrCornerStyle?: 'square' | 'dot' | 'extra-rounded'; // Outer Frame

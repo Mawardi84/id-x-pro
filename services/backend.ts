@@ -3,7 +3,7 @@ import { Member, InstitutionConfig, CardTemplate, SystemUser, IssuanceLog, Audit
 // --- INITIAL SEED DATA (Database Default) ---
 const DB_DEFAULTS = {
     CONFIG: {
-        name: 'CABANG KEJAKSAAN NEGERI KOTA SEMARANG', secondaryName: '', logoUrl: 'https://cdn-icons-png.flaticon.com/512/9566/9566164.png',
+        name: 'KEMENTERIAN TEKNOLOGI', secondaryName: 'REPUBLIK INDONESIA', logoUrl: 'https://cdn-icons-png.flaticon.com/512/9566/9566164.png',
         primaryColor: '#06b6d4', digitalSignatureUrl: '', address: 'Jl. Medan Merdeka Barat No. 12, Jakarta Pusat', disclaimer: '1. Kartu ini adalah milik Negara.\n2. Apabila menemukan kartu ini harap dikembalikan ke instansi terkait.\n3. Dilarang menyalahgunakan kartu ini.', regulations: '',
         validityYears: 5, enableWatermark: true, watermarkOpacity: 0.05, watermarkScale: 1.0, 
         enablePattern: true, patternText: 'RESMI', patternLayout: 'BRICK', patternColor: '#06b6d4', patternOpacity: 0.15, patternRotation: -25, patternSpacing: 5, patternFontSize: 8,
